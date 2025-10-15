@@ -2,6 +2,7 @@
 //[[Rcpp::depends(RcppArmadillo)]]
 #include <RcppArmadillo.h>
 //[[Rcpp::depends(RcppParallel)]]
+#include <oneapi/tbb/concurrent_vector.h>
 #include <RcppParallel.h> 
 #include <omp.h>
 #include <string>
