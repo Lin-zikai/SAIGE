@@ -1,6 +1,6 @@
 setSparseSigma = function(sparseSigmaFile) {
   Check_File_Exist(sparseSigmaFile, "sparseSigmaFile")
-  sparseSigma = Matrix:::readMM(sparseSigmaFile)
+  sparseSigma = Matrix::readMM(sparseSigmaFile, type = "dgTMatrix")
   locations = rbind(sparseSigma@i, sparseSigma@j)
   values = sparseSigma@x
   nSubj = dim(sparseSigma)[1]
@@ -21,7 +21,6 @@ setSparseSigma_new = function(sparseGRMFile,
   Check_File_Exist(sparseGRMFile, "sparseGRMFile")
   Check_File_Exist(sparseGRMSampleIDFile, "sparseGRMSampleIDFile")
   
-  sparseGRM = Matrix:::readMM(sparseGRMFile)
   sparseGRMSampleID = data.frame(
     data.table:::fread(
       sparseGRMSampleIDFile,
@@ -53,7 +52,40 @@ setSparseSigma_new = function(sparseGRMFile,
   print(dim(mergeID))
   print(head(mergeID))
   indexIDofGRM = mergeID$IndexGRM
-  sparseGRM = sparseGRM[indexIDofGRM, indexIDofGRM]
+  subsetIndex0 = as.integer(indexIDofGRM - 1L)
+  grmInfo = readSparseGRMSubset64(
+    sparseGRMFile,
+    subsetIndex0,
+    as.integer(nrow(sparseGRMSampleID)),
+    relatednessCutoff,
+    TRUE,
+    TRUE
+  )
+  cat(
+    "Declared nonzero entries in GRM: ",
+    format(grmInfo$nnz_declared, big.mark = ","),
+    "\n"
+  )
+  cat(
+    "Entries overlapping selected samples: ",
+    format(grmInfo$nnz_read, big.mark = ","),
+    "\n"
+  )
+  cat(
+    "Entries retained after filtering: ",
+    format(grmInfo$nnz_kept, big.mark = ","),
+    "\n"
+  )
+  if (isTRUE(grmInfo$saw_lower_triangle) && isTRUE(grmInfo$saw_upper_triangle)) {
+    warning("sparse GRM file stores both triangle orientations; duplicate edges may be retained")
+  }
+  sparseGRM = Matrix::sparseMatrix(
+    i = grmInfo$i + 1L,
+    j = grmInfo$j + 1L,
+    x = grmInfo$x,
+    dims = c(grmInfo$dim, grmInfo$dim),
+    symmetric = isTRUE(grmInfo$symmetric)
+  )
   if (length(indexIDofGRM) < nrow(sampleInModel)) {
     stop(
       nrow(sampleInModel) - length(indexIDofGRM),
@@ -62,20 +94,7 @@ setSparseSigma_new = function(sparseGRMFile,
   } else {
     print("Subsetting GRM")
   }
-  removeIndex = which(sparseGRM@x < relatednessCutoff)
-  if (length(removeIndex) > 0) {
-    cat(
-      "Removing ",
-      length(removeIndex),
-      " elements in the sparse GRM < ",
-      relatednessCutoff,
-      ".\n"
-    )
-    sparseGRM@x = sparseGRM@x[-removeIndex]
-    sparseGRM@i = sparseGRM@i[-removeIndex]
-    sparseGRM@j = sparseGRM@j[-removeIndex]
-  }
-  
+
   sparseGRM@x = sparseGRM@x * tauVec[2]
   #sparseSigma = sparseGRM * tauVec[2]
   if (traitType == "binary" | traitType == "survival") {

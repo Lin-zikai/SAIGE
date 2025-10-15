@@ -7,10 +7,13 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <cmath>
-#include <ctime>// include this header for calculating execution time 
+#include <cctype>
+#include <ctime>// include this header for calculating execution time
 #include <cassert>
+#include <limits>
 #include <boost/date_time.hpp> // for gettimeofday and timeval
 #include "getMem.hpp"
 using namespace Rcpp;
@@ -1691,33 +1694,200 @@ arma::vec valueVec;
 int dimNum = 0;
 
 // [[Rcpp::export]]
-void setupSparseGRM(int r, arma::umat & locationMatinR, arma::vec & valueVecinR) {
-    // sparse x sparse -> sparse
-    //arma::sp_mat result(a);
-    //int r = a.n_rows;
-        locationMat.zeros(2,r);
-        valueVec.zeros(r);
+Rcpp::List readSparseGRMSubset64(const std::string& matrixFile,
+                                 Rcpp::IntegerVector subsetIndex,
+                                 int totalDim,
+                                 double relatednessCutoff,
+                                 bool assumeSymmetric = true,
+                                 bool useUpperTriangle = true) {
+    if (totalDim <= 0) {
+        Rcpp::stop("totalDim must be positive");
+    }
 
-    locationMat = locationMatinR;
-    valueVec = valueVecinR;
+    R_xlen_t subsetSize = subsetIndex.size();
+    if (subsetSize == 0) {
+        Rcpp::stop("subsetIndex must contain at least one entry");
+    }
+
+    std::vector<int> indexMap(static_cast<size_t>(totalDim), -1);
+    for (R_xlen_t idx = 0; idx < subsetSize; ++idx) {
+        int original = subsetIndex[idx];
+        if (original < 0 || original >= totalDim) {
+            Rcpp::stop("subsetIndex contains invalid indices");
+        }
+        indexMap[static_cast<size_t>(original)] = static_cast<int>(idx);
+    }
+
+    std::ifstream fin(matrixFile.c_str());
+    if (!fin.is_open()) {
+        Rcpp::stop("Unable to open sparse GRM file");
+    }
+
+    std::string headerLine;
+    if (!std::getline(fin, headerLine)) {
+        Rcpp::stop("Sparse GRM file is empty");
+    }
+
+    std::istringstream headerStream(headerLine);
+    std::string banner, object, format, field, symmetry;
+    headerStream >> banner >> object >> format >> field >> symmetry;
+    if (banner.rfind("%%MatrixMarket", 0) != 0) {
+        Rcpp::stop("Input file is not a MatrixMarket file");
+    }
+
+    for (char& c : symmetry) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    bool fileSymmetric = (symmetry == "symmetric");
+    bool treatAsSymmetric = assumeSymmetric && fileSymmetric;
+    bool useUpper = useUpperTriangle && treatAsSymmetric;
+
+    std::string line;
+    while (std::getline(fin, line)) {
+        if (line.empty() || line[0] == '%') {
+            continue;
+        }
+        break;
+    }
+
+    if (fin.fail()) {
+        Rcpp::stop("Failed to read matrix dimensions from GRM file");
+    }
+
+    std::istringstream dimStream(line);
+    long long nrows = 0;
+    long long ncols = 0;
+    long long declaredNNZ = 0;
+    dimStream >> nrows >> ncols >> declaredNNZ;
+
+    if (nrows <= 0 || ncols <= 0) {
+        Rcpp::stop("Invalid matrix dimensions in GRM file");
+    }
+
+    if (declaredNNZ < 0) {
+        Rcpp::stop("MatrixMarket header reported a negative entry count");
+    }
+
+    if (declaredNNZ > 2000000000LL) {
+        Rcpp::warning("GRM too large (nnz > 2e9), consider increasing relatednessCutoff");
+    }
+
+    if (totalDim != nrows || totalDim != ncols) {
+        Rcpp::warning("Number of samples in GRM does not match sample ID file");
+    }
+
+    std::vector<int> rowIndex;
+    std::vector<int> colIndex;
+    std::vector<double> values;
+    std::size_t reserveCount = declaredNNZ > 0 ? static_cast<std::size_t>(declaredNNZ) : 0;
+    if (reserveCount > 0) {
+        rowIndex.reserve(reserveCount);
+        colIndex.reserve(reserveCount);
+        values.reserve(reserveCount);
+    }
+
+    long long readNNZ = 0;
+    long long keptNNZ = 0;
+    bool sawLowerTriangle = false;
+    bool sawUpperTriangle = false;
+    while (std::getline(fin, line)) {
+        if (line.empty() || line[0] == '%') {
+            continue;
+        }
+        std::istringstream entryStream(line);
+        long long row = 0;
+        long long col = 0;
+        double val = 0.0;
+        if (!(entryStream >> row >> col >> val)) {
+            continue;
+        }
+
+        row -= 1;
+        col -= 1;
+
+        if (row < 0 || col < 0 || row >= nrows || col >= ncols) {
+            continue;
+        }
+
+        if (row < col) {
+            sawUpperTriangle = true;
+        } else if (row > col) {
+            sawLowerTriangle = true;
+        }
+
+        int mappedRow = indexMap[static_cast<size_t>(row)];
+        int mappedCol = indexMap[static_cast<size_t>(col)];
+        if (mappedRow < 0 || mappedCol < 0) {
+            continue;
+        }
+
+        readNNZ++;
+
+        if (useUpper && mappedRow > mappedCol) {
+            std::swap(mappedRow, mappedCol);
+        }
+
+        if (std::fabs(val) <= relatednessCutoff) {
+            continue;
+        }
+
+        rowIndex.push_back(mappedRow);
+        colIndex.push_back(mappedCol);
+        values.push_back(val);
+        keptNNZ++;
+    }
+
+    fin.close();
+
+    R_xlen_t nnzOut = static_cast<R_xlen_t>(values.size());
+    Rcpp::IntegerVector iVec(Rcpp::no_init(nnzOut));
+    Rcpp::IntegerVector jVec(Rcpp::no_init(nnzOut));
+    Rcpp::NumericVector xVec(Rcpp::no_init(nnzOut));
+
+    for (R_xlen_t idx = 0; idx < nnzOut; ++idx) {
+        iVec[idx] = rowIndex[static_cast<size_t>(idx)];
+        jVec[idx] = colIndex[static_cast<size_t>(idx)];
+        xVec[idx] = values[static_cast<size_t>(idx)];
+    }
+
+    return Rcpp::List::create(
+        Rcpp::Named("i") = iVec,
+        Rcpp::Named("j") = jVec,
+        Rcpp::Named("x") = xVec,
+        Rcpp::Named("dim") = static_cast<int>(subsetSize),
+        Rcpp::Named("symmetric") = treatAsSymmetric,
+        Rcpp::Named("nnz_declared") = static_cast<double>(declaredNNZ),
+        Rcpp::Named("nnz_read") = static_cast<double>(readNNZ),
+        Rcpp::Named("nnz_kept") = static_cast<double>(keptNNZ),
+        Rcpp::Named("saw_lower_triangle") = sawLowerTriangle,
+        Rcpp::Named("saw_upper_triangle") = sawUpperTriangle
+    );
+}
+
+// [[Rcpp::export]]
+void setupSparseGRM(int r,
+                    Rcpp::IntegerVector iIndex,
+                    Rcpp::IntegerVector jIndex,
+                    Rcpp::NumericVector valueVecInR) {
+    if (iIndex.size() != jIndex.size() || iIndex.size() != valueVecInR.size()) {
+        Rcpp::stop("Indices and values must have the same length");
+    }
+
+    R_xlen_t nnz = iIndex.size();
+    locationMat.set_size(2, static_cast<arma::uword>(nnz));
+    valueVec.set_size(static_cast<arma::uword>(nnz));
+
+    for (R_xlen_t idx = 0; idx < nnz; ++idx) {
+        locationMat(0, static_cast<arma::uword>(idx)) = static_cast<arma::uword>(iIndex[idx]);
+        locationMat(1, static_cast<arma::uword>(idx)) = static_cast<arma::uword>(jIndex[idx]);
+        valueVec(static_cast<arma::uword>(idx)) = static_cast<double>(valueVecInR[idx]);
+    }
+
     dimNum = r;
 
     std::cout << locationMat.n_rows << " locationMat.n_rows " << std::endl;
     std::cout << locationMat.n_cols << " locationMat.n_cols " << std::endl;
     std::cout << valueVec.n_elem << " valueVec.n_elem " << std::endl;
-    
-    //for(size_t i=0; i< 10; i++){
-    //    std::cout << valueVec(i) << std::endl;
-    //    std::cout << locationMat(0,i) << std::endl;
-    //    std::cout << locationMat(1,i) << std::endl;
-    //}
-
-    //arma::vec y = arma::linspace<arma::vec>(0, 5, r);
-    //arma::sp_fmat A = sprandu<sp_fmat>(100, 200, 0.1);
-    //arma::sp_mat result1 = result * A;
-    //arma::vec x = arma::spsolve( result, y );
-
-    //return x;
 }
 
 bool isUsePrecondM = false;
