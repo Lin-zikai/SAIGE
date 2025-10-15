@@ -225,8 +225,12 @@ parallelCrossProd_LOCO <- function(bVec) {
     .Call('_SAIGE_parallelCrossProd_LOCO', PACKAGE = 'SAIGE', bVec)
 }
 
-setupSparseGRM <- function(r, locationMatinR, valueVecinR) {
-    invisible(.Call('_SAIGE_setupSparseGRM', PACKAGE = 'SAIGE', r, locationMatinR, valueVecinR))
+readSparseGRMSubset64 <- function(matrixFile, subsetIndex, totalDim, relatednessCutoff, assumeSymmetric = TRUE, useUpperTriangle = TRUE) {
+    .Call('_SAIGE_readSparseGRMSubset64', PACKAGE = 'SAIGE', matrixFile, subsetIndex, totalDim, relatednessCutoff, assumeSymmetric, useUpperTriangle)
+}
+
+setupSparseGRM <- function(r, iIndex, jIndex, valueVecInR) {
+    invisible(.Call('_SAIGE_setupSparseGRM', PACKAGE = 'SAIGE', r, iIndex, jIndex, valueVecInR))
 }
 
 getCrossprodMatAndKin <- function(bVec) {

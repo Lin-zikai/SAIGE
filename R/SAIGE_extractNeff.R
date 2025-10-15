@@ -425,16 +425,15 @@ getNeff = function(plinkFile = "",
         out.transform = NULL
     }
     if (IsSparseKin) {
-        sparseGRMtest = getsubGRM(sparseGRMFile, sparseGRMSampleIDFile, 
-        relatednessCutoff, dataMerge_sort$IID)
+        sparseGRMinfo = getsubGRM(sparseGRMFile, sparseGRMSampleIDFile,
+        relatednessCutoff, dataMerge_sort$IID, return_triplet = TRUE)
+        sparseGRMtest = sparseGRMinfo$matrix
         m4 = gen_sp_v2(sparseGRMtest)
         print("print m4")
         print(dim(m4))
-        A = summary(m4)
-        locationMatinR = rbind(A$i - 1, A$j - 1)
-        valueVecinR = A$x
-        setupSparseGRM(dim(m4)[1], locationMatinR, valueVecinR)
-        rm(sparseGRMtest)
+        tripletData = sparseGRMinfo$triplet
+        setupSparseGRM(tripletData$dim, tripletData$i, tripletData$j, tripletData$x)
+        rm(sparseGRMtest, sparseGRMinfo)
     }
     if (traitType == "binary") {
         cat(phenoCol, " is a binary trait\n")

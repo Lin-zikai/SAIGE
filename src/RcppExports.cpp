@@ -734,15 +734,32 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// readSparseGRMSubset64
+Rcpp::List readSparseGRMSubset64(const std::string& matrixFile, Rcpp::IntegerVector subsetIndex, int totalDim, double relatednessCutoff, bool assumeSymmetric, bool useUpperTriangle);
+RcppExport SEXP _SAIGE_readSparseGRMSubset64(SEXP matrixFileSEXP, SEXP subsetIndexSEXP, SEXP totalDimSEXP, SEXP relatednessCutoffSEXP, SEXP assumeSymmetricSEXP, SEXP useUpperTriangleSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const std::string& >::type matrixFile(matrixFileSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type subsetIndex(subsetIndexSEXP);
+    Rcpp::traits::input_parameter< int >::type totalDim(totalDimSEXP);
+    Rcpp::traits::input_parameter< double >::type relatednessCutoff(relatednessCutoffSEXP);
+    Rcpp::traits::input_parameter< bool >::type assumeSymmetric(assumeSymmetricSEXP);
+    Rcpp::traits::input_parameter< bool >::type useUpperTriangle(useUpperTriangleSEXP);
+    rcpp_result_gen = Rcpp::wrap(readSparseGRMSubset64(matrixFile, subsetIndex, totalDim, relatednessCutoff, assumeSymmetric, useUpperTriangle));
+    return rcpp_result_gen;
+END_RCPP
+}
 // setupSparseGRM
-void setupSparseGRM(int r, arma::umat& locationMatinR, arma::vec& valueVecinR);
-RcppExport SEXP _SAIGE_setupSparseGRM(SEXP rSEXP, SEXP locationMatinRSEXP, SEXP valueVecinRSEXP) {
+void setupSparseGRM(int r, Rcpp::IntegerVector iIndex, Rcpp::IntegerVector jIndex, Rcpp::NumericVector valueVecInR);
+RcppExport SEXP _SAIGE_setupSparseGRM(SEXP rSEXP, SEXP iIndexSEXP, SEXP jIndexSEXP, SEXP valueVecInRSEXP) {
 BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< int >::type r(rSEXP);
-    Rcpp::traits::input_parameter< arma::umat& >::type locationMatinR(locationMatinRSEXP);
-    Rcpp::traits::input_parameter< arma::vec& >::type valueVecinR(valueVecinRSEXP);
-    setupSparseGRM(r, locationMatinR, valueVecinR);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type iIndex(iIndexSEXP);
+    Rcpp::traits::input_parameter< Rcpp::IntegerVector >::type jIndex(jIndexSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type valueVecInR(valueVecInRSEXP);
+    setupSparseGRM(r, iIndex, jIndex, valueVecInR);
     return R_NilValue;
 END_RCPP
 }
@@ -3086,7 +3103,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_SAIGE_innerProductFun", (DL_FUNC) &_SAIGE_innerProductFun, 2},
     {"_SAIGE_parallelCrossProd_full", (DL_FUNC) &_SAIGE_parallelCrossProd_full, 2},
     {"_SAIGE_parallelCrossProd_LOCO", (DL_FUNC) &_SAIGE_parallelCrossProd_LOCO, 1},
-    {"_SAIGE_setupSparseGRM", (DL_FUNC) &_SAIGE_setupSparseGRM, 3},
+    {"_SAIGE_readSparseGRMSubset64", (DL_FUNC) &_SAIGE_readSparseGRMSubset64, 6},
+    {"_SAIGE_setupSparseGRM", (DL_FUNC) &_SAIGE_setupSparseGRM, 4},
     {"_SAIGE_getCrossprodMatAndKin", (DL_FUNC) &_SAIGE_getCrossprodMatAndKin, 1},
     {"_SAIGE_getCrossprodMatAndKin_LOCO", (DL_FUNC) &_SAIGE_getCrossprodMatAndKin_LOCO, 1},
     {"_SAIGE_printComb", (DL_FUNC) &_SAIGE_printComb, 1},

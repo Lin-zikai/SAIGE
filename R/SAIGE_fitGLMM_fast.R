@@ -1407,16 +1407,15 @@ fitNULLGLMM = function(plinkFile = "",
     data.new$covoffset = covoffset
 
     if (useSparseGRMtoFitNULL | useSparseGRMforVarRatio) {
-        sparseGRMtest = getsubGRM(sparseGRMFile, sparseGRMSampleIDFile,
-            relatednessCutoff, dataMerge_sort$IID)
+        sparseGRMinfo = getsubGRM(sparseGRMFile, sparseGRMSampleIDFile,
+            relatednessCutoff, dataMerge_sort$IID, return_triplet = TRUE)
+        sparseGRMtest = sparseGRMinfo$matrix
         m4 = gen_sp_v2(sparseGRMtest)
         cat("Setting up sparse GRM using ", sparseGRMFile, " and ", sparseGRMSampleIDFile, "\n")
         cat("Dimension of the sparse GRM is ", dim(m4), "\n")
-        A = summary(m4)
-        locationMatinR = rbind(A$i - 1, A$j - 1)
-        valueVecinR = A$x
-        setupSparseGRM(dim(m4)[1], locationMatinR, valueVecinR)
-        rm(sparseGRMtest)
+        tripletData = sparseGRMinfo$triplet
+        setupSparseGRM(tripletData$dim, tripletData$i, tripletData$j, tripletData$x)
+        rm(sparseGRMtest, sparseGRMinfo)
     }
 
     if(!skipVarianceRatioEstimation){
@@ -2425,23 +2424,20 @@ getSparseSigma = function(bedFile,
   }else{ # if(sparseGRMFile=="")
     cat("sparse GRM has been specified\n")
     cat("read in sparse GRM from ",sparseGRMFile,"\n")
-    sparseGRMLarge = Matrix:::readMM(sparseGRMFile)
-    #cat("sparseSigmaFile: ", sparseSigmaFile, "\n")
     if(sparseGRMSampleIDFile != ""){
       if(!file.exists(sparseGRMSampleIDFile)){
         stop("ERROR! sparseSigmaSampleIDFile ", sparseGRMSampleIDFile, " does not exsit\n")
       }else{
         sparseGRMSampleID = data.frame(data.table:::fread(sparseGRMSampleIDFile, header=F, stringsAsFactors=FALSE, colClasses=c("character")))
         colnames(sparseGRMSampleID) = c("sampleID")
-      } 
+      }
     }else{#end of if(sparseSigmaSampleIDFile != "")
       stop("ERROR! sparseSigmaSampleIDFile is not specified\n")
     }
-  #}
 
       sparseGRMSampleID$IndexGRM = c(1:nrow(sparseGRMSampleID))
-	cat("length(sparseGRMSampleID$IndexGRM): ", length(sparseGRMSampleID$IndexGRM), "\n")
-	cat("nrow(sparseGRMSampleID): ", nrow(sparseGRMSampleID), "\n")
+        cat("length(sparseGRMSampleID$IndexGRM): ", length(sparseGRMSampleID$IndexGRM), "\n")
+        cat("nrow(sparseGRMSampleID): ", nrow(sparseGRMSampleID), "\n")
       sampleInModel = NULL
       sampleInModel$IID = obj.glmm.null$sampleID
       sampleInModel = data.frame(sampleInModel)
@@ -2452,10 +2448,16 @@ getSparseSigma = function(bedFile,
       print(dim(mergeID))
       print(head(mergeID))
       indexIDofGRM=mergeID$IndexGRM
-      #cat("indexIDofGRM = ", indexIDofGRM, "\n")
-      #cat("Subset sparse GRM to be ", indexIDofSigma," by ", indexIDofSigma, "\n")
-      sparseGRM = sparseGRMLarge[indexIDofGRM, indexIDofGRM]
-      rm(sparseGRMLarge)
+      subsetIndex0 = as.integer(indexIDofGRM - 1L)
+      grmInfo = readSparseGRMSubset64(sparseGRMFile, subsetIndex0, as.integer(nrow(sparseGRMSampleID)), relatednessCutoff, TRUE, TRUE)
+      cat("Declared nonzero entries in GRM: ", format(grmInfo$nnz_declared, big.mark = ","), "\n")
+      cat("Entries overlapping selected samples: ", format(grmInfo$nnz_read, big.mark = ","), "\n")
+      cat("Entries retained after filtering: ", format(grmInfo$nnz_kept, big.mark = ","), "\n")
+      if (isTRUE(grmInfo$saw_lower_triangle) && isTRUE(grmInfo$saw_upper_triangle)) {
+        warning("sparse GRM file stores both triangle orientations; duplicate edges may be retained")
+      }
+      sparseGRM = Matrix::sparseMatrix(i = grmInfo$i + 1L, j = grmInfo$j + 1L, x = grmInfo$x,
+          dims = c(grmInfo$dim, grmInfo$dim), symmetric = isTRUE(grmInfo$symmetric))
 }
   #sparseGRMFile = paste0(outputPrefix,"_relatednessCutoff_",relatednessCutoff, "_", numRandomMarkerforSparseKin, "_randomMarkersUsed.sparseGRM.subset.mtx")
   #cat("write sparse GRM to ", sparseGRMFile ,"\n")
@@ -2473,54 +2475,49 @@ getSparseSigma = function(bedFile,
 
 
 getsubGRM <- function (sparseGRMFile = NULL, sparseGRMSampleIDFile = "", relatednessCutoff,
-    modelID = NULL)
+    modelID = NULL, return_triplet = FALSE, assumeSymmetric = TRUE,
+    useUpperTriangle = TRUE)
 {
     cat("extract sparse GRM\n")
-    sparseGRMLarge = Matrix:::readMM(sparseGRMFile)
-    print(nnzero(sparseGRMLarge))
-    cat("set elements in the sparse GRM <= ", relatednessCutoff,
-        " to zero\n")
-    sparseGRMLarge = Matrix:::drop0(sparseGRMLarge, tol = relatednessCutoff)
-        sparseGRMLarge = sparseGRMLarge * 1
-    print(nnzero(sparseGRMLarge))
     if (!file.exists(sparseGRMSampleIDFile)) {
         stop("ERROR! sparseSigmaSampleIDFile ", sparseGRMSampleIDFile,
             " does not exist\n")
     }
-    else {
-        sparseGRMSampleID = data.frame(data.table:::fread(sparseGRMSampleIDFile,
-            header = F, stringsAsFactors = FALSE, colClasses = c("character")))
-        colnames(sparseGRMSampleID) = c("sampleID")
-        sparseGRMSampleID$IndexGRM = seq(1, nrow(sparseGRMSampleID),
-            by = 1)
-        if (nrow(sparseGRMSampleID) != dim(sparseGRMLarge)[1] |
-            nrow(sparseGRMSampleID) != dim(sparseGRMLarge)[2]) {
-            stop("ERROR! number of samples in the sparse GRM is not the same to the number of sample IDs in the specified sparseGRMSampleIDFile ",
-                sparseGRMSampleIDFile, "\n")
-        }
-        else {
-            sampleInModel = NULL
-            sampleInModel$IID = modelID
-            sampleInModel = data.frame(sampleInModel)
-            sampleInModel$IndexInModel = seq(1, length(sampleInModel$IID),
-                by = 1)
-            cat(nrow(sampleInModel), " samples have been used to fit the glmm null model\n")
-            mergeID = merge(sampleInModel, sparseGRMSampleID,
-                by.x = "IID", by.y = "sampleID")
-            if (nrow(sampleInModel) > nrow(mergeID)) {
-                stop("ERROR: ", nrow(sampleInModel) - nrow(mergeID),
-                  "samples used for model fitting are not in the specified GRM\n")
-            }
-            else {
-                mergeID = mergeID[with(mergeID, order(IndexInModel)),
-                  ]
-                indexIDofGRM = mergeID$IndexGRM
-                sparseGRM = sparseGRMLarge[indexIDofGRM, indexIDofGRM]
-                rm(sparseGRMLarge)
-                return(sparseGRM)
-            }
-        }
+    sparseGRMSampleID = data.frame(data.table:::fread(sparseGRMSampleIDFile,
+        header = F, stringsAsFactors = FALSE, colClasses = c("character")))
+    colnames(sparseGRMSampleID) = c("sampleID")
+    sparseGRMSampleID$IndexGRM = seq(1, nrow(sparseGRMSampleID),
+        by = 1)
+    sampleInModel = NULL
+    sampleInModel$IID = modelID
+    sampleInModel = data.frame(sampleInModel)
+    sampleInModel$IndexInModel = seq(1, length(sampleInModel$IID),
+        by = 1)
+    cat(nrow(sampleInModel), " samples have been used to fit the glmm null model\n")
+    mergeID = merge(sampleInModel, sparseGRMSampleID,
+        by.x = "IID", by.y = "sampleID")
+    if (nrow(sampleInModel) > nrow(mergeID)) {
+        stop("ERROR: ", nrow(sampleInModel) - nrow(mergeID),
+            "samples used for model fitting are not in the specified GRM\n")
     }
+    mergeID = mergeID[with(mergeID, order(IndexInModel)), ]
+    indexIDofGRM = mergeID$IndexGRM
+    subsetIndex0 = as.integer(indexIDofGRM - 1L)
+    grmInfo = readSparseGRMSubset64(sparseGRMFile, subsetIndex0, as.integer(nrow(sparseGRMSampleID)),
+        relatednessCutoff, assumeSymmetric, useUpperTriangle)
+    cat("Declared nonzero entries in GRM: ", format(grmInfo$nnz_declared, big.mark = ","), "\n")
+    cat("Entries overlapping selected samples: ", format(grmInfo$nnz_read, big.mark = ","), "\n")
+    cat("Entries retained after filtering: ", format(grmInfo$nnz_kept, big.mark = ","), "\n")
+    if (isTRUE(grmInfo$saw_lower_triangle) && isTRUE(grmInfo$saw_upper_triangle)) {
+        warning("sparse GRM file stores both triangle orientations; duplicate edges may be retained")
+    }
+    sparseGRM = Matrix::sparseMatrix(i = grmInfo$i + 1L, j = grmInfo$j + 1L, x = grmInfo$x,
+        dims = c(grmInfo$dim, grmInfo$dim), symmetric = isTRUE(grmInfo$symmetric))
+    attr(sparseGRM, "saige_triplet") <- grmInfo
+    if (return_triplet) {
+        return(list(matrix = sparseGRM, triplet = grmInfo))
+    }
+    return(sparseGRM)
 }
 
 
